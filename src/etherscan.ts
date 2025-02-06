@@ -10,6 +10,7 @@ const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 const WALLET_ADDRESS = "0x4e1b32cb147edfe07622c88b90f1ea0df00b6aed";
 const MAX_DEPTH = 2; // Kaç "hop" derinliğe kadar takip edilecek
 const MIN_PERCENTAGE_THRESHOLD = 0.3; // %30 eşik değeri
+const LABEL = "scam";
 
 // 📌 Log dizini (Bir üst klasörde `logs/`)
 const LOG_DIR = path.join(__dirname, "..", "logs");
@@ -464,6 +465,29 @@ async function trackMultiHop(wallet: string, depth: number, visited: Set<string>
     }
 }
 
+async function fetchBlacklistedAddresses() {
+    const url = `https://api.etherscan.io/api?module=account&action=tokenblacklist&tag=${LABEL}&apikey=${ETHERSCAN_API_KEY}`;
+
+    try {
+        const response = await axios.get(url);
+        if (response.data.status !== "1") {
+            console.error("API'den geçerli veri alınamadı.");
+            return;
+        }
+
+        const suspiciousAddresses = response.data.result;
+        logToFile(`Şüpheli Adresler:, ${suspiciousAddresses}`);
+
+        // 📌 JSON dosyasına kaydet
+        logToJson({ date: DATE, label: LABEL, addresses: suspiciousAddresses });
+
+        
+    } catch (error) {
+        logToFile("Adresler alınırken hata oluştu: " + error);
+        logToJson({ error: "Adresler alınırken hata oluştu:" + error });
+    }
+}
+
 
 // 📌 Tüm Fonksiyonları Çağır
 (async function () {
@@ -476,4 +500,5 @@ async function trackMultiHop(wallet: string, depth: number, visited: Set<string>
     await checkTornadoCashUsage();
     await checkDarknetAndScamTransactions();
     await trackMultiHop(WALLET_ADDRESS, 1, new Set(),100);
+    await fetchBlacklistedAddresses();;
 })();
