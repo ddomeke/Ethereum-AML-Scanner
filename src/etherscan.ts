@@ -8,6 +8,8 @@ dotenv.config();
 
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 const WALLET_ADDRESS = "0x4e1b32cb147edfe07622c88b90f1ea0df00b6aed";
+const MAX_DEPTH = 2; // Kaç "hop" derinliğe kadar takip edilecek
+const MIN_PERCENTAGE_THRESHOLD = 0.3; // %30 eşik değeri
 
 // 📌 Log dizini (Bir üst klasörde `logs/`)
 const LOG_DIR = path.join(__dirname, "..", "logs");
@@ -410,6 +412,57 @@ async function checkDarknetAndScamTransactions() {
     }
 }
 
+// 📌 API’den işlem geçmişini al
+async function fetchTransactions(wallet: string) {
+    const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${wallet}&startblock=0&endblock=99999999&sort=asc&apikey=${ETHERSCAN_API_KEY}`;
+
+    try {
+        const response = await axios.get(url);
+        if (response.data.status !== "1") return [];
+        return response.data.result;
+    } catch (error) {
+        logToFile(`❌ ${wallet} adresinin işlemleri alınamadı: ${error}`);
+        return [];
+    }
+}
+
+// 📌 Multi-Hop Transferleri İzleyen Fonksiyon
+async function trackMultiHop(wallet: string, depth: number, visited: Set<string>, prevAmount: number) {
+    if (depth > MAX_DEPTH || visited.has(wallet)) return;
+    visited.add(wallet);
+
+    logToFile(`🔎 ${depth}. Hop: ${wallet} adresi takip ediliyor...`);
+
+    const transactions = await fetchTransactions(wallet);
+
+    for (const tx of transactions) {
+        const sender = tx.from;
+        const receiver = tx.to;
+        const amount = parseFloat(tx.value) / Math.pow(10, 18);
+        const txHash = `https://etherscan.io/tx/${tx.hash}`;
+        
+        // Eğer transfer edilen miktar önceki hop'un %30'undan fazla ise loga yaz
+        if (amount >= prevAmount * MIN_PERCENTAGE_THRESHOLD) {
+            logToFile(`🚨 **Şüpheli İşlem Tespit Edildi!**`);
+            logToFile(`🔄 ${sender} → ${receiver} | ${amount} ETH | Tx: ${txHash}`);
+
+            // JSON'a yazdır
+            logToJson({
+                depth,
+                sender,
+                receiver,
+                amount,
+                transactionHash: txHash,
+                suspicious: true
+            });
+
+            // Eğer bu transfer yeni bir cüzdana gidiyorsa, zinciri takip et
+            if (!visited.has(receiver)) {
+                await trackMultiHop(receiver, depth + 1, visited, amount);
+            }
+        }
+    }
+}
 
 
 // 📌 Tüm Fonksiyonları Çağır
@@ -422,4 +475,5 @@ async function checkDarknetAndScamTransactions() {
     await checkHackerInteractions();
     await checkTornadoCashUsage();
     await checkDarknetAndScamTransactions();
+    await trackMultiHop(WALLET_ADDRESS, 1, new Set(),100);
 })();
