@@ -9,14 +9,31 @@ dotenv.config();
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 const WALLET_ADDRESS = "0x4e1b32cb147edfe07622c88b90f1ea0df00b6aed";
 
-// Log dosyasının ismini cüzdan adresi + tarih yap
-const DATE = new Date().toISOString().replace(/[:.]/g, "-").split("T")[0];
-const LOG_FILE_PATH = path.join(__dirname, `${WALLET_ADDRESS}-${DATE}.log`);
+// 📌 Log dizini (Bir üst klasörde `logs/`)
+const LOG_DIR = path.join(__dirname, "..", "logs");
 
-// Log dosyasını temizle ve başlık ekle
-fs.writeFileSync(LOG_FILE_PATH, `Ethereum Adresi: ${WALLET_ADDRESS}\nTarih: ${DATE}\n\n`);
+// 📌 Log dizini yoksa oluştur
+if (!fs.existsSync(LOG_DIR)) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+}
 
-// 📌 Log fonksiyonu (Sadece dosyaya yazacak)
+// 📌 JSON dizini (Bir üst klasörde `json/`)
+const JSON_DIR = path.join(__dirname, "..", "json");
+
+// 📌 JSON dizini yoksa oluştur
+if (!fs.existsSync(JSON_DIR)) {
+    fs.mkdirSync(JSON_DIR, { recursive: true });
+}
+
+// 📌 Tarih formatını oluştur (YYYY-MM-DD_HH-MM-SS)
+const DATE = new Date().toISOString().replace(/[:]/g, "-").replace("T", "_").split(".")[0];
+const LOG_FILE_PATH = path.join(LOG_DIR, `${WALLET_ADDRESS}-${DATE}.log`);
+const JSON_FILE_PATH = path.join(JSON_DIR, `${WALLET_ADDRESS}-${DATE}.json`);
+
+// 📌 Log dosyasını temizle ve başlık ekle
+fs.writeFileSync(LOG_FILE_PATH, `Ethereum Adresi: ${WALLET_ADDRESS}\nTarih: ${DATE.replace("_", " ")}\n\n`);
+
+// 📌 Log fonksiyonu (Sadece `../logs/` dizinine yazacak)
 function logToFile(message: string) {
     fs.appendFileSync(LOG_FILE_PATH, message + "\n");
 }
@@ -38,6 +55,36 @@ function logTableToFileSimple(headers: string[], rows: any[][]) {
     logToFile(tableString);
 }
 
+// 📌 JSON formatında veriyi kaydetme fonksiyonu
+function logToJson(data: any) {
+    let existingData: any[] = [];
+
+    // Eğer dosya varsa, mevcut veriyi oku ve içine ekle
+    if (fs.existsSync(JSON_FILE_PATH)) {
+        const fileContent = fs.readFileSync(JSON_FILE_PATH, "utf8");
+        existingData = JSON.parse(fileContent);
+    }
+
+    // Yeni veriyi mevcut listeye ekleyerek güncelle
+    existingData.push(data);
+
+    // JSON dosyasına yaz
+    fs.writeFileSync(JSON_FILE_PATH, JSON.stringify(existingData, null, 4));
+}
+
+// 📌 JSON formatında tablo yazdıran fonksiyon
+function logTableToJson(headers: string[], rows: any[][], sectionName: string) {
+    const tableData = rows.map(row => {
+        let obj: { [key: string]: any } = {};
+        headers.forEach((header, index) => {
+            obj[header] = row[index];
+        });
+        return obj;
+    });
+
+    logToJson({ [sectionName]: tableData });
+}
+
 // 📌 1. ERC-20 Token Transferlerini Getir ve Dosyaya Yaz
 async function fetchERC20Transfers() {
     try {
@@ -47,6 +94,7 @@ async function fetchERC20Transfers() {
 
         if (transactions.length === 0) {
             logToFile("Bu adrese ait hiçbir ERC-20 token transferi bulunamadı.");
+            logToJson({ message: "Bu adrese ait hiçbir ERC-20 token transferi bulunamadı." });
             return;
         }
 
@@ -64,8 +112,10 @@ async function fetchERC20Transfers() {
         }
 
         logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "Token", "Miktar", "Tx Hash"], rows);
+        logTableToJson(["Blok", "Zaman", "Kimden", "Kime", "Token", "Miktar", "Tx Hash"], rows, "ERC20_Transactions");
     } catch (error) {
         logToFile("ERC-20 işlemleri alınırken hata oluştu: " + error);
+        logToJson({ error: "ERC-20 işlemleri alınırken hata oluştu: " + error });
     }
 }
 
@@ -78,12 +128,14 @@ async function getAllERC20Tokens() {
         const transactions = response.data.result;
 
         if (transactions.length === 0) {
-            logToFile("Bu adrese ait hiçbir ERC-20 işlemi bulunamadı.");
+            logToFile("Bu adrese ait hiçbir ERC-20 işlemi bulunamadı.");            
+            logToJson({ message: "Bu adrese ait hiçbir ERC-20 işlemi bulunamadı." });
             return;
         }
 
         const uniqueTokens = new Set(transactions.map((tx: any) => tx.contractAddress));
-        logToFile(`Cüzdandaki ERC-20 Tokenler:\n`);
+        logToFile(`Cüzdandaki ERC-20 Tokenler:\n`);        
+        logToJson({ message: "Cüzdandaki ERC-20 Tokenler:" });
 
         const rows = [];
         for (let tokenAddress of uniqueTokens) {
@@ -100,8 +152,10 @@ async function getAllERC20Tokens() {
         }
 
         logTableToFileSimple(["Token Adı", "Sembol", "Token Adresi", "Bakiye"], rows);
+        logTableToJson(["Token Adı", "Sembol", "Token Adresi", "Bakiye"], rows, "ERC20_Transactions");
     } catch (error) {
         logToFile("ERC-20 tokenler alınırken hata oluştu: " + error);
+        logToJson({ error: "ERC-20 tokenler alınırken hata oluştu: " + error });
     }
 }
 
@@ -114,7 +168,10 @@ async function getTokenBalance(tokenContractAddress: string) {
         const balance = parseFloat(response.data.result) / Math.pow(10, 18);
         return balance;
     } catch (error) {
-        logToFile(`❌ ${tokenContractAddress} adresi için hata oluştu: ${error}`);
+        const errorMessage = `${tokenContractAddress} adresi için hata oluştu: ${error}`;
+        logToFile(errorMessage);
+        logToJson({ error: errorMessage });
+        
         return 0;
     }
 }
@@ -128,6 +185,7 @@ async function getNFTTransactions() {
 
         if (transactions.length === 0) {
             logToFile("Bu adrese ait hiçbir NFT transferi bulunamadı.");
+            logToJson({ message: "Bu adrese ait hiçbir NFT transferi bulunamadı." });
             return;
         }
 
@@ -145,8 +203,11 @@ async function getNFTTransactions() {
         }
 
         logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "NFT Adı", "NFT ID", "Tx Hash"], rows);
+        logTableToJson(["Blok", "Zaman", "Kimden", "Kime", "NFT Adı", "NFT ID", "Tx Hash"], rows, "NFT_Transactions");
     } catch (error) {
         logToFile("NFT transferleri alınırken hata oluştu: " + error);
+        logToJson({ error: "NFT transferleri alınırken hata oluştu: " + error });
+    
     }
 }
 
@@ -159,8 +220,10 @@ async function getETHBalance() {
         const balanceInWei = response.data.result;
         const balanceInETH = parseFloat(balanceInWei) / Math.pow(10, 18);
         logToFile(`Cüzdan Bakiyesi: ${balanceInETH} ETH\n`);
+        logToJson({ ETH_Balance: `${balanceInETH} ETH` });
     } catch (error) {
-        logToFile("Bakiye alınırken hata oluştu: " + error);
+        logToFile("Bakiye alınırken hata oluştu: " + error);        
+        logToJson({ error: "Bakiye alınırken hata oluştu: " + error });
     }
 }
 
@@ -174,6 +237,7 @@ async function getETHTransactions() {
 
         if (transactions.length === 0) {
             logToFile("Bu adrese ait hiçbir ETH transferi bulunamadı.");
+            logToJson({ message: "Bu adrese ait hiçbir ETH transferi bulunamadı." });
             return;
         }
 
@@ -190,8 +254,11 @@ async function getETHTransactions() {
         }
 
         logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "Miktar (ETH)", "Tx Hash"], rows);
+        logTableToJson(["Blok", "Zaman", "Kimden", "Kime", "Miktar", "Tx Hash"], rows, "ETH_Transactions");
+
     } catch (error) {
         logToFile("ETH transferleri alınırken hata oluştu: " + error);
+        logToJson({ error: "ETH transferleri alınırken hata oluştu: " + error });
     }
 }
 
@@ -223,7 +290,8 @@ async function checkHackerInteractions() {
         const transactions: EtherscanTransaction[] = response.data.result; // ✅ API'den dönen veriyi tipliyoruz
 
         if (transactions.length === 0) {
-            logToFile("Bu cüzdanın işlem geçmişi bulunamadı.");
+            logToFile("Bu cüzdanın işlem geçmişi bulunamadı.");            
+            logToJson({ message: "Bu cüzdanın işlem geçmişi bulunamadı." });
             return;
         }
 
@@ -233,7 +301,8 @@ async function checkHackerInteractions() {
         );
 
         if (riskyTransactions.length > 0) {
-            logToFile("Bu cüzdan hacker adresleriyle etkileşimde bulunmuş!");
+            logToFile("Bu cüzdan hacker adresleriyle etkileşimde bulunmuş!");            
+            logToJson({ message: "Bu cüzdan hacker adresleriyle etkileşimde bulunmuş!." });
             const rows = riskyTransactions.map((tx: EtherscanTransaction) => [
                 tx.blockNumber,
                 new Date(parseInt(tx.timeStamp) * 1000).toLocaleString(),
@@ -241,12 +310,15 @@ async function checkHackerInteractions() {
                 tx.to,
                 `https://etherscan.io/tx/${tx.hash}`
             ]);
-            logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "İşlem Linki"], rows);
+            logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "İşlem Linki"], rows);            
+            logTableToJson(["Blok", "Zaman", "Kimden", "Kime", "İşlem Linki"], rows, "ERC20_Transactions");
         } else {
             logToFile("Bu cüzdan bilinen hacker adresleriyle etkileşime girmemiş.");
+            logToJson({ message: "Bu cüzdan bilinen hacker adresleriyle etkileşime girmemiş." });
         }
     } catch (error) {
         logToFile("Hacker adres analizi sırasında hata oluştu: " + error);
+        logToJson({ error: "Hacker adres analizi sırasında hata oluştu: " + error });
     }
 }
 
@@ -267,7 +339,8 @@ async function checkTornadoCashUsage() {
         );
 
         if (mixerTransactions.length > 0) {
-            logToFile("Bu cüzdan Tornado Cash ile etkileşimde bulunmuş!");
+            logToFile("Bu cüzdan Tornado Cash ile etkileşimde bulunmuş!");            
+            logToJson({ message: "Bu cüzdan Tornado Cash ile etkileşimde bulunmuş!" });
             const rows = mixerTransactions.map((tx: EtherscanTransaction) => [
                 tx.blockNumber,
                 new Date(parseInt(tx.timeStamp) * 1000).toLocaleString(),
@@ -276,11 +349,14 @@ async function checkTornadoCashUsage() {
                 `https://etherscan.io/tx/${tx.hash}`
             ]);
             logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "İşlem Linki"], rows);
+            logTableToJson(["Blok", "Zaman", "Kimden", "Kime", "İşlem Linki"], rows, "ERC20_Transactions");
         } else {
             logToFile("Bu cüzdan Tornado Cash kullanmamış.");
+            logToJson({ message: "Bu cüzdan Tornado Cash kullanmamış." });
         }
     } catch (error) {
         logToFile("Tornado Cash analizi sırasında hata oluştu: " + error);
+        logToJson({ error: "Tornado Cash analizi sırasında hata oluştu: " + error });
     }
 }
 
@@ -300,7 +376,8 @@ async function checkDarknetAndScamTransactions() {
         const transactions = response.data.result;
 
         if (transactions.length === 0) {
-            logToFile("Bu cüzdanın işlem geçmişi bulunamadı.");
+            logToFile("Bu cüzdanın işlem geçmişi bulunamadı.");            
+            logToJson({ message: "Bu cüzdanın işlem geçmişi bulunamadı" });
             return;
         }
 
@@ -310,7 +387,8 @@ async function checkDarknetAndScamTransactions() {
         );
 
         if (riskyTransactions.length > 0) {
-            logToFile("Bu cüzdan scam & darknet adresleriyle etkileşimde bulunmuş!");
+            logToFile("Bu cüzdan scam & darknet adresleriyle etkileşimde bulunmuş!");            
+            logToJson({ message: "Bu cüzdan scam & darknet adresleriyle etkileşimde bulunmuş!" });
             const rows = riskyTransactions.map((tx: EtherscanTransaction) => [
                 tx.blockNumber,
                 new Date(parseInt(tx.timeStamp) * 1000).toLocaleString(),
@@ -320,11 +398,15 @@ async function checkDarknetAndScamTransactions() {
                 `https://etherscan.io/tx/${tx.hash}`
             ]);
             logTableToFileSimple(["Blok", "Zaman", "Kimden", "Kime", "Miktar", "Tx Hash"], rows);
+            logTableToJson(["Blok", "Zaman", "Kimden", "Kime", "Miktar", "Tx Hash"], rows, "ERC20_Transactions");
         } else {
             logToFile("Bu cüzdan scam & darknet adresleriyle etkileşime girmemiş.");
+            logToJson({ message: "Bu cüzdan scam & darknet adresleriyle etkileşime girmemiş." });
         }
     } catch (error) {
         logToFile("Darknet & scam adres analizi sırasında hata oluştu: " + error);
+        logToJson({ error: "Darknet & scam adres analizi sırasında hata oluştu: " + error });
+
     }
 }
 
